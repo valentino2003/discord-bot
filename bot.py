@@ -3,17 +3,24 @@ from discord.ext import commands, tasks
 import requests
 from datetime import datetime, timedelta
 import os
-from dotenv import load_dotenv
+import sys
 
-# === LOAD KONFIGURASI DARI .env ===
-load_dotenv()
+# === KONFIGURASI ===
 TOKEN = os.getenv("DISCORD_TOKEN")
 FIVEM_IP = os.getenv("FIVEM_IP")
 FIVEM_PORT = os.getenv("FIVEM_PORT")
 
+# === VALIDASI TOKEN ===
+if not TOKEN:
+    print("❌ ERROR: Environment variable DISCORD_TOKEN belum di-set atau kosong!")
+    sys.exit(1)
+
+# Offset WIB = UTC+7
+WIB_OFFSET = timedelta(hours=7)
+
 # === DISCORD BOT SETUP ===
 intents = discord.Intents.default()
-intents.message_content = True   # WAJIB supaya bot bisa baca command
+intents.message_content = True  # WAJIB supaya bot bisa baca command
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # === SIMPAN PLAYER TERAKHIR UNTUK MONITORING ===
@@ -46,7 +53,6 @@ def get_server_info():
 # === COMMAND !players ===
 @bot.command()
 async def players(ctx):
-    print(f"[DEBUG] Command !players dipanggil oleh {ctx.author}")
     players = get_players()
     if not players:
         await ctx.send("❌ Server offline atau gagal ambil data.")
@@ -64,10 +70,10 @@ async def players(ctx):
         name = p.get("name", "Unknown")
         player_id = p.get("id", "N/A")
 
-        # hitung jam connect
+        # hitung jam connect di WIB
         connected_seconds = p.get("connected", 0)
-        join_time = datetime.now() - timedelta(seconds=connected_seconds)
-        join_time_str = join_time.strftime("%H:%M:%S")
+        join_time = datetime.utcnow() + WIB_OFFSET - timedelta(seconds=connected_seconds)
+        join_time_str = join_time.strftime("%H:%M:%S WIB")
 
         embed.add_field(
             name=f"🆔 {player_id} | {name}",
@@ -80,7 +86,6 @@ async def players(ctx):
 # === COMMAND !serverinfo ===
 @bot.command()
 async def serverinfo(ctx):
-    print(f"[DEBUG] Command !serverinfo dipanggil oleh {ctx.author}")
     info = get_server_info()
     if not info:
         await ctx.send("❌ Gagal ambil info server.")
@@ -102,43 +107,38 @@ async def serverinfo(ctx):
 # === COMMAND !player <id> ===
 @bot.command()
 async def player(ctx, player_id: int):
-    print(f"[DEBUG] Command !player {player_id} dipanggil oleh {ctx.author}")
     players = get_players()
     if not players:
         await ctx.send("❌ Server offline atau gagal ambil data.")
         return
 
-    # cari player dengan ID
     player = next((p for p in players if p.get("id") == player_id), None)
 
     if not player:
         await ctx.send(f"⚠️ Player dengan ID {player_id} tidak ditemukan.")
         return
 
-    # embed untuk detail player
     embed = discord.Embed(
         title=f"🧍 Detail Player ID {player_id}",
         color=discord.Color.orange()
     )
 
-    # tampilkan semua key-value yang ada di JSON player
     for key, value in player.items():
         if isinstance(value, list):
-            value = "\n".join(value)
+            value = "\n".join(str(v) for v in value)
         embed.add_field(name=key, value=str(value), inline=False)
 
     embed.set_footer(text="FiveM Server Monitor")
-
     await ctx.send(embed=embed)
 
 # === LOOP UNTUK UPDATE STATUS BOT ===
-@tasks.loop(seconds=15)  # update setiap 60 detik
+@tasks.loop(seconds=60)  # update setiap 60 detik
 async def update_status():
     players = get_players()
     if players is not None:
         jumlah = len(players)
         await bot.change_presence(
-            activity=discord.Game(name=f"👥 {jumlah} Players On EXECUTIVERP ")
+            activity=discord.Game(name=f"👥 {jumlah} Players On EXECUTIVERP")
         )
     else:
         await bot.change_presence(
@@ -146,9 +146,7 @@ async def update_status():
         )
 
 # === LOOP MONITOR REALTIME CONNECT/DISCONNECT ===
-# === LOOP MONITOR REALTIME CONNECT/DISCONNECT ===
-# === LOOP MONITOR REALTIME CONNECT/DISCONNECT ===
-@tasks.loop(seconds=1)  # cek tiap 10 detik
+@tasks.loop(seconds=10)
 async def monitor_players():
     global last_players
     players = get_players()
@@ -163,9 +161,8 @@ async def monitor_players():
 
     channel = discord.utils.get(bot.get_all_channels(), name="bot-dump")
     if channel:
-        now = datetime.now().strftime("%d-%m-%Y %H:%M:%S")  # tanggal + jam
+        now = (datetime.utcnow() + WIB_OFFSET).strftime("%d-%m-%Y %H:%M:%S WIB")
 
-        # === PLAYER CONNECT ===
         for pid in joined:
             p = current_players[pid]
             embed = discord.Embed(
@@ -176,10 +173,8 @@ async def monitor_players():
             embed.add_field(name="🧍 Nama", value=p.get("name", "Unknown"), inline=True)
             embed.add_field(name="⏰ Waktu", value=now, inline=False)
             embed.set_footer(text="FiveM Server Monitor")
-
             await channel.send(embed=embed)
 
-        # === PLAYER DISCONNECT ===
         for pid in left:
             p = last_players[pid]
             embed = discord.Embed(
@@ -190,11 +185,9 @@ async def monitor_players():
             embed.add_field(name="🧍 Nama", value=p.get("name", "Unknown"), inline=True)
             embed.add_field(name="⏰ Waktu", value=now, inline=False)
             embed.set_footer(text="FiveM Server Monitor")
-
             await channel.send(embed=embed)
 
     last_players = current_players
-
 
 # === EVENT SAAT BOT SIAP ===
 @bot.event
